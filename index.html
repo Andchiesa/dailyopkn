@@ -502,15 +502,35 @@
   setInterval(render, 60000); // re-check active cycle each minute
   tickClock();
 
-  /* ---------- storage ---------- */
+  /* ---------- storage adapter ----------
+     Uses window.storage when running inside a Claude.ai artifact,
+     and falls back to localStorage automatically when running on
+     independent hosting (Netlify, GitHub Pages, etc.), so the same
+     file works in both places without edits. */
+  const hasCloudStorage = (typeof window.storage !== "undefined")
+    && window.storage && typeof window.storage.get === "function";
+
+  async function storageGet(key){
+    if(hasCloudStorage){
+      const res = await window.storage.get(key, true);
+      return res ? res.value : null;
+    }
+    return localStorage.getItem(key);
+  }
+  async function storageSet(key, value){
+    if(hasCloudStorage){
+      const res = await window.storage.set(key, value, true);
+      if(!res) throw new Error("cloud storage set failed");
+      return true;
+    }
+    localStorage.setItem(key, value);
+    return true;
+  }
+
   async function loadData(){
     try{
-      const res = await window.storage.get(STORAGE_KEY, true);
-      if(res && res.value){
-        data = JSON.parse(res.value);
-      } else {
-        data = defaultData();
-      }
+      const raw = await storageGet(STORAGE_KEY);
+      data = raw ? JSON.parse(raw) : defaultData();
     }catch(e){
       data = defaultData();
     }
@@ -520,8 +540,7 @@
   async function saveData(newData){
     data = newData;
     try{
-      const result = await window.storage.set(STORAGE_KEY, JSON.stringify(data), true);
-      if(!result) throw new Error("no result");
+      await storageSet(STORAGE_KEY, JSON.stringify(data));
       showToast("Dashboard atualizado com sucesso");
     }catch(e){
       showToast("Não foi possível salvar. Tente novamente.");
@@ -533,8 +552,8 @@
   async function loadTheme(){
     let theme = "light";
     try{
-      const res = await window.storage.get(THEME_KEY, false);
-      if(res && res.value) theme = res.value;
+      const raw = await storageGet(THEME_KEY);
+      if(raw) theme = raw;
     }catch(e){ /* default light */ }
     applyTheme(theme);
   }
@@ -547,7 +566,7 @@
     const current = document.documentElement.getAttribute("data-theme") || "light";
     const next = current === "dark" ? "light" : "dark";
     applyTheme(next);
-    try{ await window.storage.set(THEME_KEY, next, false); }catch(e){}
+    try{ await storageSet(THEME_KEY, next); }catch(e){}
   });
 
   /* ---------- print ---------- */

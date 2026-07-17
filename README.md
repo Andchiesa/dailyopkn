@@ -38,3 +38,5 @@ HTML5, CSS3 e JavaScript puro (vanilla) — nenhum framework
 Google Fonts (Space Grotesk, Inter, JetBrains Mono)
 Ícones SVG inline, desenhados sob medida
 API de armazenamento key-value para persistência dos dados (sem necessidade de banco de dados)
+
+https://dailyopkn.netlify.app/

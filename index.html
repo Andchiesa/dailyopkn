@@ -362,6 +362,8 @@
   const STORAGE_KEY = "kn-dashboard-data-v1";
   const THEME_KEY = "kn-dashboard-theme";
 
+  // Fixed accent color + fallback label/hours per cycle id (only used to
+  // migrate older saved data that doesn't yet have label/startH/endH stored).
   const CYCLE_META = [
     { id:"AM0", label:"AM0", startH:6,  endH:14, color:"var(--sky-400)"  },
     { id:"PM1", label:"PM1", startH:14, endH:22, color:"var(--blue-600)" },
@@ -373,30 +375,55 @@
     return {
       date: iso,
       cycles: [
-        { id:"AM0", sideA:{coord:"Carlos Mendes", leaders:"João Silva, Pedro Santos", hc:42}, sideB:{coord:"Marcos Alves", leaders:"Ana Costa", hc:37} },
-        { id:"PM1", sideA:{coord:"Fernanda Lima", leaders:"Rafael Souza", hc:35}, sideB:{coord:"Bruno Rocha", leaders:"Camila Dias, Tiago Nunes", hc:31} },
-        { id:"SD",  sideA:{coord:"Renato Alves", leaders:"Priscila Melo", hc:18}, sideB:{coord:"Diego Fontes", leaders:"Larissa Prado", hc:15} }
+        { id:"AM0", label:"AM0", startH:6,  endH:14, sideA:{coord:"Carlos Mendes", leaders:"João Silva, Pedro Santos", hc:42}, sideB:{coord:"Marcos Alves", leaders:"Ana Costa", hc:37} },
+        { id:"PM1", label:"PM1", startH:14, endH:22, sideA:{coord:"Fernanda Lima", leaders:"Rafael Souza", hc:35}, sideB:{coord:"Bruno Rocha", leaders:"Camila Dias, Tiago Nunes", hc:31} },
+        { id:"SD",  label:"SD",  startH:22, endH:6,  sideA:{coord:"Renato Alves", leaders:"Priscila Melo", hc:18}, sideB:{coord:"Diego Fontes", leaders:"Larissa Prado", hc:15} }
       ]
     };
+  }
+
+  // Fills in label/startH/endH for cycles saved before this feature existed.
+  function migrateCycles(cycles){
+    return cycles.map(cy=>{
+      const fallback = CYCLE_META.find(c=>c.id===cy.id) || {};
+      return Object.assign({
+        label: fallback.label || cy.id,
+        startH: fallback.startH != null ? fallback.startH : 0,
+        endH: fallback.endH != null ? fallback.endH : 0
+      }, cy);
+    });
   }
 
   let data = null;
   let countUpTimers = [];
 
-  function fmtRange(m){
-    const s = m.startH.toString().padStart(2,"0")+":00";
-    const e = m.endH.toString().padStart(2,"0")+":00";
-    return s+" – "+e;
+  function hourToTimeStr(h){
+    h = ((Number(h)||0) % 24 + 24) % 24;
+    const hh = Math.floor(h);
+    const mm = Math.round((h - hh) * 60);
+    return String(hh).padStart(2,"0") + ":" + String(mm).padStart(2,"0");
+  }
+  function timeStrToHour(str){
+    const parts = String(str||"0:00").split(":").map(Number);
+    const hh = parts[0] || 0, mm = parts[1] || 0;
+    return hh + mm/60;
   }
 
-  function isActiveCycle(m, now){
+  function fmtRange(cy){
+    return hourToTimeStr(cy.startH) + " – " + hourToTimeStr(cy.endH);
+  }
+
+  function isActiveCycle(cy, now){
     const h = now.getHours() + now.getMinutes()/60;
-    if(m.startH < m.endH){ return h >= m.startH && h < m.endH; }
+    if(cy.startH < cy.endH){ return h >= cy.startH && h < cy.endH; }
     // overnight cycle (e.g. 22 -> 6)
-    return h >= m.startH || h < m.endH;
+    return h >= cy.startH || h < cy.endH;
   }
 
-  function cycleMeta(id){ return CYCLE_META.find(c=>c.id===id); }
+  function cycleColor(id){
+    const fallback = CYCLE_META.find(c=>c.id===id);
+    return fallback ? fallback.color : "var(--blue-600)";
+  }
 
   function animateCount(el, to){
     const from = parseInt(el.dataset.val || "0", 10);
@@ -422,24 +449,24 @@
     let grandTotal = 0;
 
     data.cycles.forEach(cy=>{
-      const meta = cycleMeta(cy.id);
+      const color = cycleColor(cy.id);
       const totalA = Number(cy.sideA.hc) || 0;
       const totalB = Number(cy.sideB.hc) || 0;
       const total = totalA + totalB;
       grandTotal += total;
 
-      const active = isActiveCycle(meta, now);
+      const active = isActiveCycle(cy, now);
 
       const el = document.createElement("div");
       el.className = "cycle" + (active ? " active" : "");
-      el.style.setProperty("--cy-color", meta.color);
+      el.style.setProperty("--cy-color", color);
 
       el.innerHTML = `
         <div class="cycle-head">
           <div class="name">
             <span class="cycle-dot"></span>
-            <h2>${meta.label}</h2>
-            <span class="cycle-range">${fmtRange(meta)}</span>
+            <h2>${escapeHtml(cy.label)}</h2>
+            <span class="cycle-range">${fmtRange(cy)}</span>
           </div>
           <span class="live-badge"><span class="live-dot"></span> Ciclo Atual</span>
         </div>
@@ -534,6 +561,9 @@
     }catch(e){
       data = defaultData();
     }
+    if(data && Array.isArray(data.cycles)){
+      data.cycles = migrateCycles(data.cycles);
+    }
     render();
   }
 
@@ -591,11 +621,16 @@
     const wrap = document.getElementById("formCycles");
     wrap.innerHTML = "";
     data.cycles.forEach(cy=>{
-      const meta = cycleMeta(cy.id);
+      const color = cycleColor(cy.id);
       const box = document.createElement("div");
       box.className = "cycle-form";
       box.innerHTML = `
-        <h3><span class="sw" style="background:${meta.color}"></span> Ciclo ${meta.label} <span style="color:var(--text-secondary); font-weight:500; font-size:.75rem;">(${fmtRange(meta)})</span></h3>
+        <h3><span class="sw" style="background:${color}"></span> Ciclo ${escapeHtml(cy.label)}</h3>
+        <div class="f-group"><label>Nome do ciclo</label><input data-cy="${cy.id}" data-field="label" value="${escapeAttr(cy.label)}"></div>
+        <div style="display:flex; gap:.6rem;">
+          <div class="f-group" style="flex:1;"><label>Início</label><input type="time" data-cy="${cy.id}" data-field="startH" value="${hourToTimeStr(cy.startH)}"></div>
+          <div class="f-group" style="flex:1;"><label>Fim</label><input type="time" data-cy="${cy.id}" data-field="endH" value="${hourToTimeStr(cy.endH)}"></div>
+        </div>
         <div class="side-form-title">Lado A</div>
         <div class="f-group"><label>Coordenador</label><input data-cy="${cy.id}" data-side="sideA" data-field="coord" value="${escapeAttr(cy.sideA.coord)}"></div>
         <div class="f-group"><label>Liderança</label><input data-cy="${cy.id}" data-side="sideA" data-field="leaders" value="${escapeAttr(cy.sideA.leaders)}"></div>
@@ -637,8 +672,15 @@
       const cyObj = newData.cycles.find(c=>c.id===cyId);
       if(!cyObj) return;
       let val = inp.value;
-      if(field === "hc") val = Math.max(0, parseInt(val,10) || 0);
-      cyObj[side][field] = val;
+      if(side){
+        // field belongs to sideA / sideB
+        if(field === "hc") val = Math.max(0, parseInt(val,10) || 0);
+        cyObj[side][field] = val;
+      } else if(field === "startH" || field === "endH"){
+        cyObj[field] = timeStrToHour(val);
+      } else if(field === "label"){
+        cyObj.label = val.trim() || cyObj.id;
+      }
     });
     await saveData(newData);
     closeDrawer();
